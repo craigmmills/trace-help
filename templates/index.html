@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trace Explorer - Global Nature Watch</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <h1>Trace Explorer</h1>
+                <p class="subtitle">Global Nature Watch</p>
+            </div>
+
+            <nav class="nav-section">
+                <h3>Views</h3>
+                <button class="nav-btn active" data-view="all">
+                    <span class="icon">&#128220;</span>
+                    All Traces
+                </button>
+                <button class="nav-btn" data-view="showcase">
+                    <span class="icon">&#127775;</span>
+                    Showcase
+                </button>
+                <button class="nav-btn" data-view="interests">
+                    <span class="icon">&#9733;</span>
+                    By Interest
+                </button>
+            </nav>
+
+            <div class="analysis-section">
+                <h3>LLM Analysis</h3>
+                <p class="help-text">Analyze traces to find the most impactful conversations</p>
+                <button id="run-analysis" class="btn-primary">
+                    Run Analysis
+                </button>
+                <div id="analysis-status" class="status-indicator"></div>
+            </div>
+
+            <div class="categories-section" id="categories-section" style="display: none;">
+                <h3>Interest Categories</h3>
+                {% for key, cat in categories.items() %}
+                <div class="category-card" data-category="{{ key }}">
+                    <div class="category-header">
+                        <span class="category-name">{{ cat.name }}</span>
+                        <span class="category-badge" id="badge-{{ key }}">--</span>
+                    </div>
+                    <p class="category-desc">{{ cat.description }}</p>
+                    <button class="btn-secondary view-top-btn" data-category="{{ key }}">
+                        View Top 10
+                    </button>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="stats-section" id="stats-section">
+                <h3>Statistics</h3>
+                <div class="stat-item">
+                    <span class="stat-label">Total Traces</span>
+                    <span class="stat-value" id="total-traces">--</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Analyzed</span>
+                    <span class="stat-value" id="analyzed-count">0</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="content-header">
+                <h2 id="view-title">All Traces</h2>
+                <div class="search-box">
+                    <input type="text" id="search-input" placeholder="Search conversations...">
+                </div>
+            </header>
+
+            <!-- Trace List -->
+            <div class="trace-list" id="trace-list">
+                <div class="loading">Loading traces...</div>
+            </div>
+        </main>
+
+        <!-- Detail Panel -->
+        <aside class="detail-panel" id="detail-panel">
+            <div class="panel-header">
+                <h3>Conversation Details</h3>
+                <button class="close-btn" id="close-detail">&times;</button>
+            </div>
+            <div class="panel-content" id="panel-content">
+                <p class="placeholder-text">Select a trace to view details</p>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Analysis Modal -->
+    <div class="modal" id="analysis-modal">
+        <div class="modal-content">
+            <h3>Running LLM Analysis</h3>
+            <p>Analyzing traces with Google Gemini...</p>
+            <div class="progress-container">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            <p class="progress-text" id="progress-text">Preparing...</p>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
