@@ -7,6 +7,7 @@ import csv
 import json
 import os
 import sys
+import time
 from datetime import datetime
 from flask import Flask, render_template, jsonify, request
 from dotenv import load_dotenv
@@ -22,6 +23,39 @@ app = Flask(__name__)
 
 # Configure Gemini with new SDK
 client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
+
+
+def call_gemini_with_retry(contents, config=None, max_retries=3, base_delay=2):
+    """Call Gemini API with exponential backoff retry logic."""
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            if config:
+                response = client.models.generate_content(
+                    model='gemini-2.0-flash',
+                    contents=contents,
+                    config=config
+                )
+            else:
+                response = client.models.generate_content(
+                    model='gemini-2.0-flash',
+                    contents=contents
+                )
+            return response
+        except Exception as e:
+            last_error = e
+            error_str = str(e)
+            # Check if it's a rate limit error
+            if '429' in error_str or 'RESOURCE_EXHAUSTED' in error_str:
+                delay = base_delay * (2 ** attempt)  # Exponential backoff: 2, 4, 8 seconds
+                print(f"Rate limited, waiting {delay}s before retry {attempt + 1}/{max_retries}...")
+                time.sleep(delay)
+            else:
+                # For non-rate-limit errors, raise immediately
+                raise e
+
+    # If all retries exhausted, raise the last error
+    raise last_error
 
 # Interest categories for analysis
 INTEREST_CATEGORIES = {
@@ -93,11 +127,7 @@ Return ONLY a JSON object with:
 Only return URLs from the search results. If you cannot find relevant content about WRI's programmatic work, set found to false."""
 
     try:
-        response = client.models.generate_content(
-            model='gemini-2.0-flash',
-            contents=search_prompt,
-            config=config
-        )
+        response = call_gemini_with_retry(search_prompt, config=config)
 
         result_text = response.text
 
@@ -626,11 +656,7 @@ Return ONLY a JSON object with:
 - "source": where this was published"""
 
     try:
-        response = client.models.generate_content(
-            model='gemini-2.0-flash',
-            contents=search_prompt,
-            config=config
-        )
+        response = call_gemini_with_retry(search_prompt, config=config)
 
         result_text = response.text
 
@@ -727,10 +753,7 @@ Return a JSON object:
 Only output valid JSON."""
 
     try:
-        response = client.models.generate_content(
-            model='gemini-2.0-flash',
-            contents=analysis_prompt
-        )
+        response = call_gemini_with_retry(analysis_prompt)
         result_text = response.text
 
         if '```json' in result_text:
@@ -745,8 +768,10 @@ Only output valid JSON."""
             package['demo_prompts'] = demo_prompts
 
         # Search for regional context if we have region info
+        # Add a small delay to avoid rate limiting
         region_info = package.get('region', {})
         if region_info.get('country') or region_info.get('area'):
+            time.sleep(1)  # Small delay between API calls
             region_query = f"{region_info.get('area', '')} {region_info.get('country', '')}"
             topics = region_info.get('topics', ['land use change'])
             topic_str = ', '.join(topics[:3])
@@ -756,6 +781,7 @@ Only output valid JSON."""
 
         # Search for WRI programmatic connections
         if region_info.get('country') or region_info.get('area'):
+            time.sleep(1)  # Small delay between API calls
             region_query = f"{region_info.get('area', '')} {region_info.get('country', '')}"
             topics = region_info.get('topics', ['forests'])
             topic_str = ', '.join(topics[:2])
