@@ -7,6 +7,8 @@ let allTraces = [];
 let currentView = 'all';
 let currentCategory = null;
 let selectedTraceId = null;
+let selectedForPackage = new Set(); // Traces selected for presentation packages
+let isSelectionMode = false;
 
 // DOM Elements
 const traceList = document.getElementById('trace-list');
@@ -274,8 +276,11 @@ function createTraceCard(trace) {
         summaryHtml = '<div class="trace-summary">' + buildInterestSummary(trace) + '</div>';
     }
 
+    const isSelectedForPackage = selectedForPackage.has(trace.id);
+
     return `
-        <div class="trace-card ${trace.id === selectedTraceId ? 'selected' : ''}" data-trace-id="${trace.id}">
+        <div class="trace-card ${trace.id === selectedTraceId ? 'selected' : ''} ${isSelectedForPackage ? 'selected-for-package' : ''}" data-trace-id="${trace.id}">
+            ${createSelectionCheckbox(trace.id)}
             <div class="trace-header">
                 <div class="trace-meta">
                     <span class="trace-id">${trace.id.substring(0, 12)}...</span>
@@ -410,8 +415,11 @@ function createShowcaseCard(trace, rank) {
         summaryHtml = '<div class="trace-summary">' + buildInterestSummary(trace) + '</div>';
     }
 
+    const isSelectedForPackage = selectedForPackage.has(trace.id);
+
     return `
-        <div class="trace-card showcase ${trace.id === selectedTraceId ? 'selected' : ''}" data-trace-id="${trace.id}">
+        <div class="trace-card showcase ${trace.id === selectedTraceId ? 'selected' : ''} ${isSelectedForPackage ? 'selected-for-package' : ''}" data-trace-id="${trace.id}">
+            ${createSelectionCheckbox(trace.id)}
             <div class="trace-header">
                 <div class="trace-meta">
                     <span class="showcase-rank">#${rank}</span>
@@ -715,4 +723,420 @@ function toggleTranslationDisplay(traceId) {
     btn.innerHTML = showingTranslation
         ? '<span class="translate-icon">&#127760;</span> Show Original'
         : '<span class="translate-icon">&#127760;</span> Show Translation';
+}
+
+// ==========================================
+// PRESENTATION PACKAGE FUNCTIONALITY
+// ==========================================
+
+function toggleSelectionMode() {
+    isSelectionMode = !isSelectionMode;
+    const btn = document.getElementById('toggle-selection');
+    const selectionBar = document.getElementById('selection-bar');
+
+    if (isSelectionMode) {
+        btn.classList.add('active');
+        btn.innerHTML = '<span class="icon">&#10003;</span> Done Selecting';
+        selectionBar.classList.add('visible');
+        document.body.classList.add('selection-mode');
+    } else {
+        btn.classList.remove('active');
+        btn.innerHTML = '<span class="icon">&#9744;</span> Select Traces';
+        selectionBar.classList.remove('visible');
+        document.body.classList.remove('selection-mode');
+    }
+
+    // Re-render to show/hide checkboxes
+    if (currentView === 'showcase') {
+        loadTopTraces('showcase');
+    } else {
+        renderTraces(allTraces);
+    }
+
+    updateSelectionCount();
+}
+
+function toggleTraceSelection(traceId, event) {
+    if (event) {
+        event.stopPropagation();
+    }
+
+    if (selectedForPackage.has(traceId)) {
+        selectedForPackage.delete(traceId);
+    } else {
+        selectedForPackage.add(traceId);
+    }
+
+    // Update checkbox state
+    const checkbox = document.querySelector(`.select-checkbox[data-trace-id="${traceId}"]`);
+    if (checkbox) {
+        checkbox.classList.toggle('checked', selectedForPackage.has(traceId));
+    }
+
+    // Update card selected state
+    const card = document.querySelector(`.trace-card[data-trace-id="${traceId}"]`);
+    if (card) {
+        card.classList.toggle('selected-for-package', selectedForPackage.has(traceId));
+    }
+
+    updateSelectionCount();
+}
+
+function updateSelectionCount() {
+    const countEl = document.getElementById('selection-count');
+    const generateBtn = document.getElementById('generate-packages');
+
+    if (countEl) {
+        countEl.textContent = selectedForPackage.size;
+    }
+
+    if (generateBtn) {
+        generateBtn.disabled = selectedForPackage.size === 0;
+    }
+}
+
+function clearSelection() {
+    selectedForPackage.clear();
+    document.querySelectorAll('.select-checkbox.checked').forEach(cb => cb.classList.remove('checked'));
+    document.querySelectorAll('.trace-card.selected-for-package').forEach(card => card.classList.remove('selected-for-package'));
+    updateSelectionCount();
+}
+
+async function generatePresentationPackages() {
+    if (selectedForPackage.size === 0) return;
+
+    const modal = document.getElementById('package-modal');
+    const progressBar = document.getElementById('package-progress-bar');
+    const progressText = document.getElementById('package-progress-text');
+    const packageContent = document.getElementById('package-content');
+
+    modal.classList.add('active');
+    packageContent.innerHTML = '';
+    progressBar.style.width = '0%';
+    progressText.textContent = `Generating packages for ${selectedForPackage.size} trace(s)...`;
+
+    const traceIds = Array.from(selectedForPackage);
+    const packages = [];
+
+    for (let i = 0; i < traceIds.length; i++) {
+        const traceId = traceIds[i];
+        const progress = ((i) / traceIds.length) * 100;
+        progressBar.style.width = `${progress}%`;
+        progressText.textContent = `Generating package ${i + 1} of ${traceIds.length}...`;
+
+        try {
+            const response = await fetch(`/api/presentation-package/${traceId}`);
+            const pkg = await response.json();
+            packages.push(pkg);
+        } catch (error) {
+            console.error(`Error generating package for ${traceId}:`, error);
+            packages.push({ error: error.message, trace_id: traceId });
+        }
+    }
+
+    progressBar.style.width = '100%';
+    progressText.textContent = 'Complete!';
+
+    // Render packages
+    setTimeout(() => {
+        renderPresentationPackages(packages);
+    }, 500);
+}
+
+function renderPresentationPackages(packages) {
+    const packageContent = document.getElementById('package-content');
+
+    let html = '<div class="packages-container">';
+
+    packages.forEach((pkg, index) => {
+        if (pkg.error) {
+            html += `
+                <div class="package-card error">
+                    <div class="package-header">
+                        <h3>Package ${index + 1}</h3>
+                        <span class="error-badge">Error</span>
+                    </div>
+                    <p class="error-message">${escapeHtml(pkg.error)}</p>
+                </div>
+            `;
+            return;
+        }
+
+        const region = pkg.region || {};
+        const capabilities = pkg.gnw_capabilities || {};
+        const angle = pkg.presentation_angle || {};
+        const regionalCtx = pkg.regional_context || {};
+        const wriConn = pkg.wri_connection || {};
+
+        html += `
+            <div class="package-card">
+                <div class="package-header">
+                    <h3>Package ${index + 1}: ${region.country || 'Unknown Region'}${region.area ? ` - ${region.area}` : ''}</h3>
+                    <span class="package-date">${pkg.timestamp ? new Date(pkg.timestamp).toLocaleDateString() : ''}</span>
+                </div>
+
+                ${pkg.summary ? `<div class="package-summary">${escapeHtml(pkg.summary)}</div>` : ''}
+
+                <div class="package-section">
+                    <h4><span class="section-icon">&#127908;</span> Demo Prompts</h4>
+                    <div class="demo-prompts">
+                        ${(pkg.demo_prompts || []).map((prompt, i) => `
+                            <div class="demo-prompt">
+                                <span class="prompt-number">${i + 1}</span>
+                                <div class="prompt-text">${escapeHtml(prompt)}</div>
+                                <button class="copy-btn" onclick="copyToClipboard('${escapeHtml(prompt).replace(/'/g, "\\'")}', this)">Copy</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <div class="package-section">
+                    <h4><span class="section-icon">&#127758;</span> Regional Context</h4>
+                    <div class="regional-context">
+                        <div class="context-location">
+                            <strong>Location:</strong> ${region.area || 'N/A'}, ${region.country || 'N/A'}
+                            ${region.coordinates ? `<span class="coords">(${region.coordinates})</span>` : ''}
+                        </div>
+                        ${region.topics && region.topics.length > 0 ? `
+                            <div class="context-topics">
+                                <strong>Key Topics:</strong>
+                                ${region.topics.map(t => `<span class="topic-tag">${escapeHtml(t)}</span>`).join('')}
+                            </div>
+                        ` : ''}
+                        ${regionalCtx.context ? `
+                            <div class="context-background">
+                                <strong>Geopolitical/Economic Context:</strong>
+                                <p>${escapeHtml(regionalCtx.context)}</p>
+                            </div>
+                        ` : ''}
+                        ${regionalCtx.recent_events && regionalCtx.recent_events.length > 0 ? `
+                            <div class="context-events">
+                                <strong>Recent Developments:</strong>
+                                <ul>
+                                    ${regionalCtx.recent_events.map(e => `<li>${escapeHtml(e)}</li>`).join('')}
+                                </ul>
+                            </div>
+                        ` : ''}
+                        ${regionalCtx.url ? `
+                            <div class="context-source">
+                                <a href="${regionalCtx.url}" target="_blank" rel="noopener noreferrer" class="source-link">
+                                    Source: ${regionalCtx.source || regionalCtx.url}
+                                </a>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <div class="package-section">
+                    <h4><span class="section-icon">&#127760;</span> WRI Program Connection</h4>
+                    <div class="wri-connection-detail">
+                        ${wriConn.found ? `
+                            <p>${escapeHtml(wriConn.summary || 'Connection found')}</p>
+                            ${wriConn.url ? `
+                                <a href="${wriConn.url}" target="_blank" rel="noopener noreferrer" class="wri-link">
+                                    ${wriConn.title || wriConn.url}
+                                </a>
+                            ` : ''}
+                        ` : `
+                            <p class="no-connection">No direct WRI program connection identified. Consider framing around general WRI mission alignment.</p>
+                        `}
+                        ${pkg.existing_analysis && pkg.existing_analysis.analysis && pkg.existing_analysis.analysis.wri_connections ? `
+                            <div class="existing-wri-analysis">
+                                <strong>Previous Analysis:</strong> ${escapeHtml(pkg.existing_analysis.analysis.wri_connections)}
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <div class="package-section">
+                    <h4><span class="section-icon">&#9881;</span> GNW Capabilities Highlighted</h4>
+                    <div class="capabilities-grid">
+                        ${capabilities.data_sources && capabilities.data_sources.length > 0 ? `
+                            <div class="capability-item">
+                                <strong>Data Sources:</strong>
+                                <ul>${capabilities.data_sources.map(d => `<li>${escapeHtml(d)}</li>`).join('')}</ul>
+                            </div>
+                        ` : ''}
+                        ${capabilities.analysis_types && capabilities.analysis_types.length > 0 ? `
+                            <div class="capability-item">
+                                <strong>Analysis Types:</strong>
+                                <ul>${capabilities.analysis_types.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul>
+                            </div>
+                        ` : ''}
+                        ${capabilities.unique_insights && capabilities.unique_insights.length > 0 ? `
+                            <div class="capability-item highlight">
+                                <strong>Unique Insights:</strong>
+                                <ul>${capabilities.unique_insights.map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>
+                            </div>
+                        ` : ''}
+                        ${capabilities.technical_highlights && capabilities.technical_highlights.length > 0 ? `
+                            <div class="capability-item">
+                                <strong>Technical Highlights:</strong>
+                                <ul>${capabilities.technical_highlights.map(t => `<li>${escapeHtml(t)}</li>`).join('')}</ul>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <div class="package-section">
+                    <h4><span class="section-icon">&#127919;</span> Presentation Angle</h4>
+                    <div class="presentation-angle">
+                        ${angle.ideal_audience && angle.ideal_audience.length > 0 ? `
+                            <div class="angle-item">
+                                <strong>Ideal Audience:</strong>
+                                ${angle.ideal_audience.map(a => `<span class="audience-tag">${escapeHtml(a)}</span>`).join('')}
+                            </div>
+                        ` : ''}
+                        ${angle.story ? `
+                            <div class="angle-item">
+                                <strong>The Story:</strong>
+                                <p>${escapeHtml(angle.story)}</p>
+                            </div>
+                        ` : ''}
+                        ${angle.key_messages && angle.key_messages.length > 0 ? `
+                            <div class="angle-item key-messages">
+                                <strong>Key Messages:</strong>
+                                <ol>${angle.key_messages.map(m => `<li>${escapeHtml(m)}</li>`).join('')}</ol>
+                            </div>
+                        ` : ''}
+                        ${angle.follow_up_questions && angle.follow_up_questions.length > 0 ? `
+                            <div class="angle-item">
+                                <strong>Potential Audience Questions:</strong>
+                                <ul>${angle.follow_up_questions.map(q => `<li>${escapeHtml(q)}</li>`).join('')}</ul>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <div class="package-actions">
+                    <button class="btn-secondary" onclick="viewOriginalTrace('${pkg.trace_id}')">View Original Trace</button>
+                    <button class="btn-secondary" onclick="exportPackageAsText(${index})">Export as Text</button>
+                </div>
+            </div>
+        `;
+    });
+
+    html += '</div>';
+
+    const packageContent2 = document.getElementById('package-content');
+    packageContent2.innerHTML = html;
+
+    // Store packages for export
+    window.currentPackages = packages;
+}
+
+function copyToClipboard(text, button) {
+    navigator.clipboard.writeText(text).then(() => {
+        const originalText = button.textContent;
+        button.textContent = 'Copied!';
+        button.classList.add('copied');
+        setTimeout(() => {
+            button.textContent = originalText;
+            button.classList.remove('copied');
+        }, 1500);
+    });
+}
+
+function viewOriginalTrace(traceId) {
+    closePackageModal();
+    selectTrace(traceId);
+}
+
+function exportPackageAsText(index) {
+    const pkg = window.currentPackages[index];
+    if (!pkg) return;
+
+    let text = `PRESENTATION PACKAGE
+==================
+
+`;
+
+    if (pkg.region) {
+        text += `LOCATION: ${pkg.region.area || ''}, ${pkg.region.country || ''}\n`;
+        if (pkg.region.coordinates) text += `COORDINATES: ${pkg.region.coordinates}\n`;
+        text += '\n';
+    }
+
+    if (pkg.summary) {
+        text += `SUMMARY:\n${pkg.summary}\n\n`;
+    }
+
+    text += `DEMO PROMPTS:\n`;
+    (pkg.demo_prompts || []).forEach((prompt, i) => {
+        text += `${i + 1}. ${prompt}\n\n`;
+    });
+
+    if (pkg.regional_context && pkg.regional_context.context) {
+        text += `\nREGIONAL CONTEXT:\n${pkg.regional_context.context}\n`;
+        if (pkg.regional_context.recent_events && pkg.regional_context.recent_events.length > 0) {
+            text += `\nRecent Developments:\n`;
+            pkg.regional_context.recent_events.forEach(e => {
+                text += `- ${e}\n`;
+            });
+        }
+        if (pkg.regional_context.url) {
+            text += `\nSource: ${pkg.regional_context.url}\n`;
+        }
+    }
+
+    if (pkg.wri_connection && pkg.wri_connection.found) {
+        text += `\nWRI CONNECTION:\n${pkg.wri_connection.summary || ''}\n`;
+        if (pkg.wri_connection.url) {
+            text += `Link: ${pkg.wri_connection.url}\n`;
+        }
+    }
+
+    if (pkg.gnw_capabilities) {
+        text += `\nGNW CAPABILITIES DEMONSTRATED:\n`;
+        if (pkg.gnw_capabilities.unique_insights) {
+            text += `\nUnique Insights:\n`;
+            pkg.gnw_capabilities.unique_insights.forEach(i => text += `- ${i}\n`);
+        }
+        if (pkg.gnw_capabilities.technical_highlights) {
+            text += `\nTechnical Highlights:\n`;
+            pkg.gnw_capabilities.technical_highlights.forEach(t => text += `- ${t}\n`);
+        }
+    }
+
+    if (pkg.presentation_angle) {
+        text += `\nPRESENTATION ANGLE:\n`;
+        if (pkg.presentation_angle.story) {
+            text += `\nStory: ${pkg.presentation_angle.story}\n`;
+        }
+        if (pkg.presentation_angle.key_messages) {
+            text += `\nKey Messages:\n`;
+            pkg.presentation_angle.key_messages.forEach((m, i) => text += `${i + 1}. ${m}\n`);
+        }
+        if (pkg.presentation_angle.ideal_audience) {
+            text += `\nIdeal Audience: ${pkg.presentation_angle.ideal_audience.join(', ')}\n`;
+        }
+    }
+
+    // Create download
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `presentation-package-${pkg.trace_id.substring(0, 8)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function closePackageModal() {
+    document.getElementById('package-modal').classList.remove('active');
+}
+
+// Helper to create checkbox HTML for selection mode
+function createSelectionCheckbox(traceId) {
+    if (!isSelectionMode) return '';
+    const isChecked = selectedForPackage.has(traceId);
+    return `
+        <div class="select-checkbox ${isChecked ? 'checked' : ''}"
+             data-trace-id="${traceId}"
+             onclick="toggleTraceSelection('${traceId}', event)">
+            <span class="checkbox-icon">${isChecked ? '&#10003;' : ''}</span>
+        </div>
+    `;
 }

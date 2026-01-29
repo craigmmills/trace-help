@@ -30,6 +30,10 @@
                     <span class="icon">&#9733;</span>
                     By Interest
                 </button>
+                <button class="nav-btn selection-toggle" id="toggle-selection" onclick="toggleSelectionMode()">
+                    <span class="icon">&#9744;</span>
+                    Select Traces
+                </button>
             </nav>
 
             <div class="analysis-section">
@@ -107,6 +111,40 @@
                 <div class="progress-bar" id="progress-bar"></div>
             </div>
             <p class="progress-text" id="progress-text">Preparing...</p>
+        </div>
+    </div>
+
+    <!-- Selection Bar (Fixed at bottom) -->
+    <div class="selection-bar" id="selection-bar">
+        <div class="selection-info">
+            <div class="selection-count">
+                <span class="count-value" id="selection-count">0</span>
+                <span>traces selected</span>
+            </div>
+            <button class="btn-clear-selection" onclick="clearSelection()">Clear selection</button>
+        </div>
+        <div class="selection-actions">
+            <button class="btn-generate-packages" id="generate-packages" onclick="generatePresentationPackages()" disabled>
+                <span class="icon">&#128230;</span>
+                Generate Presentation Packages
+            </button>
+        </div>
+    </div>
+
+    <!-- Presentation Package Modal -->
+    <div class="package-modal" id="package-modal">
+        <div class="package-modal-content">
+            <div class="package-modal-header">
+                <h2>&#128230; Presentation Packages</h2>
+                <button class="package-modal-close" onclick="closePackageModal()">&times;</button>
+            </div>
+            <div class="package-progress">
+                <p id="package-progress-text">Generating presentation packages...</p>
+                <div class="progress-container">
+                    <div class="progress-bar" id="package-progress-bar"></div>
+                </div>
+            </div>
+            <div id="package-content"></div>
         </div>
     </div>
 

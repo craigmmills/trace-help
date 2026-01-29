@@ -590,6 +590,257 @@ Only output valid JSON."""
         return jsonify({'error': str(e)}), 500
 
 
+# Cache for presentation packages
+presentation_cache = {}
+
+
+def search_regional_context(region, topic):
+    """Use Google Search grounding to find recent geopolitical/economic/social context about a region."""
+    search_tool = types.Tool(
+        google_search=types.GoogleSearch()
+    )
+
+    config = types.GenerateContentConfig(
+        tools=[search_tool]
+    )
+
+    search_prompt = f"""Find recent news, articles, or reports about the geopolitical, economic, or social situation related to land use, deforestation, or environmental issues in: {region}
+
+Focus on topics like: {topic}
+
+Look for:
+- Recent policy changes or government initiatives
+- Economic pressures driving land use change (agriculture, mining, urban expansion)
+- Social factors (indigenous rights, community conflicts, migration)
+- Climate impacts and environmental trends
+- Corporate activities and supply chain issues
+- International attention or interventions
+
+Search for content from 2023-2025 that provides context on WHY land change is happening in this area.
+
+Return ONLY a JSON object with:
+- "found": true/false
+- "context": 2-3 sentences summarizing the key geopolitical/economic/social drivers of land change in this region
+- "recent_events": list of 1-3 recent relevant events or developments
+- "url": a relevant news article or report URL if found
+- "source": where this was published"""
+
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=search_prompt,
+            config=config
+        )
+
+        result_text = response.text
+
+        if '```json' in result_text:
+            result_text = result_text.split('```json')[1].split('```')[0]
+        elif '```' in result_text:
+            result_text = result_text.split('```')[1].split('```')[0]
+
+        result = json.loads(result_text.strip())
+
+        # Extract verified URL from grounding metadata
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'grounding_metadata') and candidate.grounding_metadata:
+                metadata = candidate.grounding_metadata
+                if hasattr(metadata, 'grounding_chunks') and metadata.grounding_chunks:
+                    for chunk in metadata.grounding_chunks:
+                        if hasattr(chunk, 'web') and chunk.web:
+                            result['url'] = chunk.web.uri
+                            result['found'] = True
+                            if hasattr(chunk.web, 'title'):
+                                result['source'] = chunk.web.title
+                            break
+
+        return result
+    except Exception as e:
+        print(f"Error in regional context search: {e}")
+        return {'found': False, 'context': None, 'recent_events': [], 'url': None, 'source': None}
+
+
+def generate_presentation_package(trace):
+    """Generate a full presentation package for a trace."""
+    conv_text = get_conversation_text(trace)
+
+    # Get user's first message as the demo prompt
+    user_messages = [m for m in trace['conversation'] if m['role'] in ['human', 'user']]
+    demo_prompts = [m['content'] for m in user_messages]
+
+    # Main analysis prompt
+    analysis_prompt = f"""Analyze this Global Nature Watch conversation and create a presentation package.
+
+CONVERSATION:
+{conv_text}
+
+Create a comprehensive analysis with the following sections:
+
+1. **DEMO_PROMPTS**: Extract and clean up the user's questions/prompts that would work well for a live demo. Make them presentation-ready (clear, concise, impactful).
+
+2. **REGIONAL_CONTEXT**: Identify the geographic area discussed and provide context about:
+   - What country/region/area is being discussed
+   - Key land use issues in this area
+   - Topics that might need regional context research
+
+3. **GNW_CAPABILITIES**: Highlight what Global Nature Watch capabilities are demonstrated:
+   - Data sources used or mentioned (satellite imagery, tree cover data, fire alerts, etc.)
+   - Types of analysis performed
+   - Geographic scope (how it handles different scales)
+   - Temporal analysis (change detection, trends)
+   - Unique insights provided that would be hard to get otherwise
+   - Any impressive technical demonstrations
+
+4. **PRESENTATION_ANGLE**: Suggest the best angle for presenting this trace:
+   - Who is the ideal audience (policy makers, researchers, corporate sustainability teams, etc.)
+   - What story does this tell
+   - Key takeaway messages
+   - Potential follow-up questions an audience might ask
+
+Return a JSON object:
+{{
+  "demo_prompts": ["cleaned prompt 1", "cleaned prompt 2"],
+  "region": {{
+    "country": "country name",
+    "area": "specific area/region",
+    "coordinates": "lat, lon if mentioned",
+    "topics": ["deforestation", "agriculture expansion", etc]
+  }},
+  "gnw_capabilities": {{
+    "data_sources": ["list of data sources demonstrated"],
+    "analysis_types": ["list of analysis types"],
+    "geographic_scope": "description of scale",
+    "temporal_analysis": "description of time-based analysis",
+    "unique_insights": ["list of insights that show GNW's power"],
+    "technical_highlights": ["specific technical capabilities shown"]
+  }},
+  "presentation_angle": {{
+    "ideal_audience": ["audience types"],
+    "story": "the narrative this conversation tells",
+    "key_messages": ["2-3 key takeaway points"],
+    "follow_up_questions": ["potential audience questions"]
+  }},
+  "summary": "One paragraph executive summary of why this is a great demo"
+}}
+
+Only output valid JSON."""
+
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=analysis_prompt
+        )
+        result_text = response.text
+
+        if '```json' in result_text:
+            result_text = result_text.split('```json')[1].split('```')[0]
+        elif '```' in result_text:
+            result_text = result_text.split('```')[1].split('```')[0]
+
+        package = json.loads(result_text.strip())
+
+        # Add original demo prompts as fallback
+        if not package.get('demo_prompts'):
+            package['demo_prompts'] = demo_prompts
+
+        # Search for regional context if we have region info
+        region_info = package.get('region', {})
+        if region_info.get('country') or region_info.get('area'):
+            region_query = f"{region_info.get('area', '')} {region_info.get('country', '')}"
+            topics = region_info.get('topics', ['land use change'])
+            topic_str = ', '.join(topics[:3])
+
+            regional_context = search_regional_context(region_query, topic_str)
+            package['regional_context'] = regional_context
+
+        # Search for WRI programmatic connections
+        if region_info.get('country') or region_info.get('area'):
+            region_query = f"{region_info.get('area', '')} {region_info.get('country', '')}"
+            topics = region_info.get('topics', ['forests'])
+            topic_str = ', '.join(topics[:2])
+
+            wri_evidence = search_wri_evidence(topic_str, region_query, None)
+            package['wri_connection'] = wri_evidence
+
+        # Add existing analysis if available
+        package['existing_analysis'] = {
+            'scores': trace.get('scores', {}),
+            'analysis': trace.get('analysis', {})
+        }
+
+        # Add trace metadata
+        package['trace_id'] = trace['id']
+        package['timestamp'] = trace['timestamp']
+
+        return package
+
+    except Exception as e:
+        print(f"Error generating presentation package: {e}")
+        return {
+            'error': str(e),
+            'demo_prompts': demo_prompts,
+            'trace_id': trace['id']
+        }
+
+
+@app.route('/api/presentation-package/<trace_id>')
+def get_presentation_package(trace_id):
+    """Generate or retrieve a presentation package for a trace."""
+    # Check cache first
+    if trace_id in presentation_cache:
+        return jsonify(presentation_cache[trace_id])
+
+    # Find the trace
+    trace = None
+    for t in traces_data:
+        if t['id'] == trace_id:
+            trace = t
+            break
+
+    if not trace:
+        return jsonify({'error': 'Trace not found'}), 404
+
+    # Generate the package
+    package = generate_presentation_package(trace)
+
+    # Cache it
+    presentation_cache[trace_id] = package
+
+    return jsonify(package)
+
+
+@app.route('/api/presentation-packages', methods=['POST'])
+def get_presentation_packages():
+    """Generate presentation packages for multiple traces."""
+    data = request.json
+    trace_ids = data.get('trace_ids', [])
+
+    if not trace_ids:
+        return jsonify({'error': 'No trace IDs provided'}), 400
+
+    packages = []
+    for trace_id in trace_ids:
+        # Check cache
+        if trace_id in presentation_cache:
+            packages.append(presentation_cache[trace_id])
+            continue
+
+        # Find trace
+        trace = None
+        for t in traces_data:
+            if t['id'] == trace_id:
+                trace = t
+                break
+
+        if trace:
+            package = generate_presentation_package(trace)
+            presentation_cache[trace_id] = package
+            packages.append(package)
+
+    return jsonify({'packages': packages})
+
+
 if __name__ == '__main__':
     load_traces()
     app.run(debug=True, port=5001)
