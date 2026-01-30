@@ -25,6 +25,9 @@ app = Flask(__name__)
 client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
 
 
+GEMINI_MODEL = 'gemini-3-flash-preview'  # Latest Flash model (Gemini 3)
+
+
 def call_gemini_with_retry(contents, config=None, max_retries=3, base_delay=2):
     """Call Gemini API with exponential backoff retry logic."""
     last_error = None
@@ -32,13 +35,13 @@ def call_gemini_with_retry(contents, config=None, max_retries=3, base_delay=2):
         try:
             if config:
                 response = client.models.generate_content(
-                    model='gemini-2.0-flash',
+                    model=GEMINI_MODEL,
                     contents=contents,
                     config=config
                 )
             else:
                 response = client.models.generate_content(
-                    model='gemini-2.0-flash',
+                    model=GEMINI_MODEL,
                     contents=contents
                 )
             return response
